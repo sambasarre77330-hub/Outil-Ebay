@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { 
   Zap, LogOut, Trash2, ExternalLink, Package, Truck, 
-  Shield, X, Bot, Activity, BrainCircuit, Rocket, Flame, Search, CheckCircle2, AlertTriangle
+  Shield, X, Bot, Activity, BrainCircuit, Rocket, Flame, Search, 
+  CheckCircle2, AlertTriangle, Landmark, Send, RefreshCw
 } from 'lucide-react'
 
 const MARQUES_VERO_DEFAUT = [
@@ -25,7 +26,7 @@ export default function Dashboard({ session, seDeconnecter }) {
   const [shops, setShops] = useState([])
   const [, setChargement] = useState(true)
 
-  // --- ÉTATS DU RADAR IA (AVEC STATUT DE STOCK EN TEMPS RÉEL) ---
+  // --- ÉTATS DU RADAR IA ---
   const [nicheRecherche, setNicheRecherche] = useState('Auto & Moto, Maison, Jardin, Bricolage')
   const [geminiApiKey, setGeminiApiKey] = useState(localStorage.getItem('ebx_gemini_key') || '')
   const [scanIaEnCours, setScanIaEnCours] = useState(false)
@@ -93,12 +94,16 @@ export default function Dashboard({ session, seDeconnecter }) {
   const [prixVente, setPrixVente] = useState('')
   const [ajoutEnCours, setAjoutEnCours] = useState(false)
 
+  // --- ÉTATS SIMULATEUR DE COMMANDE RAPIDE ---
+  const [acheteurSimulateur, setAcheteurSimulateur] = useState('Jean Dupont')
+  const [adresseSimulateur, setAdresseSimulateur] = useState('15 Avenue des Champs, 75008 Paris')
+
   // --- ÉTAT MODAL GÉNÉRATEUR HTML EBAY ---
   const [produitHtmlModal, setProduitHtmlModal] = useState(null)
   const [htmlCopie, setHtmlCopie] = useState(false)
 
   // =========================================================================
-  // SPRINT 9 : VÉRIFICATEUR DE STOCK EN TEMPS RÉEL SUR LE CATALOGUE
+  // VÉRIFICATEUR DE STOCK EN TEMPS RÉEL SUR LE CATALOGUE
   // =========================================================================
   const verifierStockCatalogueEnTempsReel = async () => {
     if (listings.length === 0) return alert("Ajoute d'abord des produits dans ton catalogue !")
@@ -111,7 +116,6 @@ export default function Dashboard({ session, seDeconnecter }) {
     const catalogueVerifie = await Promise.all(
       listings.map(async (item) => {
         const urlMin = (item.url_fournisseur || '').toLowerCase()
-        // Si l'URL contient 'rupture', 'out-of-stock' ou est vide, on bloque automatiquement l'annonce
         const estRupture =
           !item.url_fournisseur ||
           urlMin.includes('rupture') ||
@@ -155,7 +159,7 @@ export default function Dashboard({ session, seDeconnecter }) {
   }
 
   // =========================================================================
-  // RADAR IA CHASSEUR DE WINNERS (AVEC FILTRE DE DISPONIBILITÉ STOCK)
+  // RADAR IA CHASSEUR DE WINNERS
   // =========================================================================
   const sauvegarderCleGemini = (cle) => {
     setGeminiApiKey(cle)
@@ -311,7 +315,7 @@ export default function Dashboard({ session, seDeconnecter }) {
 
   const deployerSurCompteEbay = (produit) => {
     if (produit.statut && produit.statut.includes('Rupture')) {
-      return alert('⛔ Sécurité EBX : Ce produit est marqué en Rupture de stock. Publication eBay bloquée pour protéger ton compte !')
+      return alert('⛔ Sécurité EBX : Ce produit est marqué en Rupture de stock. Publication eBay bloquée !')
     }
     const htmlCode = genererCodeHtmlEbay(produit)
     navigator.clipboard.writeText(htmlCode)
@@ -479,6 +483,8 @@ export default function Dashboard({ session, seDeconnecter }) {
   useEffect(() => {
     chargerDonnees()
     const params = new URLSearchParams(window.location.search)
+
+    // 1. Réception d'un produit vérifié depuis l'Extension Chrome
     if (params.get('auto_titre')) {
       setOngletActif('catalogue')
       setTitre(params.get('auto_titre'))
@@ -487,6 +493,15 @@ export default function Dashboard({ session, seDeconnecter }) {
       setUrlFournisseur(params.get('auto_url') || '')
       setFournisseur(params.get('auto_fournisseur') || 'Amazon')
       setJournalRobot("🟢 Produit exact importé depuis ton Extension Chrome avec STOCK VÉRIFIÉ ! Clique sur 'Ajouter au Catalogue'.")
+      window.history.replaceState({}, document.title, '/')
+    }
+
+    // 2. Réception automatique d'une commande depuis eBay Seller Hub (Sprint 10)
+    if (params.get('sync_order') === '1') {
+      setOngletActif('commandes')
+      const titreImporte = params.get('order_title') || 'Produit Vendu sur eBay.fr'
+      const acheteurImporte = params.get('order_buyer') || 'Acheteur_eBay'
+      setJournalRobot(`🎉 Nouvelle vente synchronisée depuis eBay : "${titreImporte}" pour ${acheteurImporte} !`)
       window.history.replaceState({}, document.title, '/')
     }
   }, [])
@@ -550,23 +565,24 @@ export default function Dashboard({ session, seDeconnecter }) {
     if (!error) setListings(listings.filter(item => item.id !== id))
   }
 
-  const creerCommandeDepuisProduit = async (produit, nomClient = 'Acheteur_eBay_VIP', adresse = '15 Avenue des Champs, 75008 Paris') => {
+  const creerCommandeDepuisProduit = async (produit, nomClient = acheteurSimulateur, adresse = adresseSimulateur) => {
     const payload = {
       user_id: session.user.id,
       produit_titre: produit.titre,
-      acheteur_nom: nomClient,
+      acheteur_nom: nomClient || 'Jean Dupont',
       prix_vente: produit.prix_vente,
       cout_fournisseur: produit.prix_achat,
       benefice_reel: produit.benefice_net,
       numero_suivi: '',
       statut_workflow: 'A_COMMANDER',
       url_fournisseur: produit.url_fournisseur || '',
-      adresse_client: adresse
+      adresse_client: adresse || '15 Avenue des Champs, 75008 Paris'
     }
     const { data, error } = await supabase.from('orders').insert([payload]).select()
     if (!error && data) {
       setOrders([data[0], ...orders])
       setOngletActif('commandes')
+      setJournalRobot(`🛒 Commande créée pour ${payload.acheteur_nom}. Clique sur "⚡ Auto-Checkout" pour lancer le robot d'achat !`)
     } else {
       const { url_fournisseur, adresse_client, ...basicPayload } = payload
       const { data: retryData } = await supabase.from('orders').insert([basicPayload]).select()
@@ -582,14 +598,47 @@ export default function Dashboard({ session, seDeconnecter }) {
     if (!error) setOrders(orders.map(ord => ord.id === id ? { ...ord, ...champsModifies } : ord))
   }
 
+  // =========================================================================
+  // SPRINT 10 : LANCEUR D'AUTO-CHECKOUT FOURNISSEUR ET INJECTION SUIVI EBAY
+  // =========================================================================
   const executerAutoOrderFournisseur = (commande) => {
-    const ficheLivraison = `Destinataire : ${commande.acheteur_nom}\nAdresse : ${commande.adresse_client || 'Adresse eBay vérifiée'}\nProduit : ${commande.produit_titre}`
+    const acheteur = commande.acheteur_nom || 'Jean Dupont'
+    const adresse = commande.adresse_client || adresseSimulateur || '15 Avenue des Champs, 75008 Paris'
+    const ficheLivraison = `Destinataire : ${acheteur}\nAdresse : ${adresse}\nProduit : ${commande.produit_titre}`
     navigator.clipboard.writeText(ficheLivraison)
+
     mettreAJourCommande(commande.id, { statut_workflow: 'COMMANDE_FOURNISSEUR' })
+
     const produitCatalogue = listings.find(l => l.titre === commande.produit_titre)
-    const lienCible = commande.url_fournisseur || (produitCatalogue && produitCatalogue.url_fournisseur)
-    if (lienCible) window.open(lienCible, '_blank')
-    else alert("⚡ Adresse du client copiée et statut passé à 'Commandé' !")
+    const lienBase =
+      commande.url_fournisseur ||
+      (produitCatalogue && produitCatalogue.url_fournisseur) ||
+      `https://www.amazon.fr/s?k=${encodeURIComponent(commande.produit_titre.slice(0, 35))}`
+
+    const separateur = lienBase.includes('?') ? '&' : '?'
+    const lienAutoCheckout = `${lienBase}${separateur}ebx_auto_order=1&ebx_buyer=${encodeURIComponent(
+      acheteur
+    )}&ebx_addr=${encodeURIComponent(adresse)}`
+
+    window.open(lienAutoCheckout, '_blank')
+    setJournalRobot(`🤖 Auto-Checkout lancé pour ${acheteur} : l'extension Chrome ajoute au panier et injecte l'adresse de livraison !`)
+    setTimeout(() => setJournalRobot(''), 7000)
+  }
+
+  const injecterSuiviSurEbay = (commande) => {
+    if (!commande.numero_suivi || commande.numero_suivi.trim().length < 3) {
+      return alert("Entre d'abord le numéro de suivi donné par Amazon/AliExpress dans la case Suivi !")
+    }
+    navigator.clipboard.writeText(commande.numero_suivi.trim())
+    mettreAJourCommande(commande.id, { statut_workflow: 'EXPEDIE' })
+
+    const urlEbayOrders = `https://www.ebay.fr/sh/ord/?filter=status:AWAITING_SHIPMENT&ebx_tracking=${encodeURIComponent(
+      commande.numero_suivi.trim()
+    )}`
+    window.open(urlEbayOrders, '_blank')
+
+    setJournalRobot(`📦 Numéro de suivi "${commande.numero_suivi}" envoyé vers eBay Seller Hub et statut passé à EXPÉDIÉ ✅ !`)
+    setTimeout(() => setJournalRobot(''), 6000)
   }
 
   const supprimerCommande = async (id) => {
@@ -645,6 +694,11 @@ export default function Dashboard({ session, seDeconnecter }) {
     setTimeout(() => setHtmlCopie(false), 2500)
   }
 
+  // Calculs financiers pour le suivi des virements Wise (eBay Managed Payments)
+  const totalVentesBrut = orders.reduce((acc, o) => acc + (Number(o.prix_vente) || 0), 0)
+  const totalVirementWise = +(totalVentesBrut * 0.87).toFixed(2)
+  const totalProfitNet = orders.reduce((acc, o) => acc + (Number(o.benefice_reel) || 0), 0)
+
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col">
       {/* BARRE SUPÉRIEURE */}
@@ -692,7 +746,7 @@ export default function Dashboard({ session, seDeconnecter }) {
             }`}
           >
             <Truck className="w-4 h-4" />
-            Commandes ({orders.length})
+            Auto-Order & Wise ({orders.length})
           </button>
 
           <button
@@ -724,7 +778,7 @@ export default function Dashboard({ session, seDeconnecter }) {
         )}
 
         {/* =================================================================== */}
-        {/* ONGLET RADAR IA (AVEC BADGE STOCK VÉRIFIÉ & EXTRACTION PRODUIT)     */}
+        {/* ONGLET RADAR IA                                                     */}
         {/* =================================================================== */}
         {ongletActif === 'ia_radar' && (
           <div className="space-y-6">
@@ -798,7 +852,6 @@ export default function Dashboard({ session, seDeconnecter }) {
               </div>
             </div>
 
-            {/* GRILLE DES PRODUITS GAGNANTS */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {dealsIaTrouves.map((deal) => {
                 const frais = +(deal.prix_vente * 0.13 + 0.35).toFixed(2)
@@ -880,7 +933,7 @@ export default function Dashboard({ session, seDeconnecter }) {
         )}
 
         {/* =================================================================== */}
-        {/* ONGLET MOTEUR EBX (VERO + ANTI-DOUBLONS)                            */}
+        {/* ONGLET MOTEUR EBX                                                   */}
         {/* =================================================================== */}
         {ongletActif === 'moteur' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -922,7 +975,7 @@ export default function Dashboard({ session, seDeconnecter }) {
         )}
 
         {/* =================================================================== */}
-        {/* ONGLET CATALOGUE (AVEC CONTRÔLE DE STOCK EN TEMPS RÉEL)             */}
+        {/* ONGLET CATALOGUE                                                    */}
         {/* =================================================================== */}
         {ongletActif === 'catalogue' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -1023,7 +1076,6 @@ export default function Dashboard({ session, seDeconnecter }) {
                           <td className="py-3.5 pr-4">
                             <button
                               onClick={() => basculerStatutStock(item)}
-                              title="Cliquer pour basculer En Stock / Rupture"
                               className={`text-xs font-bold px-2.5 py-1 rounded-full cursor-pointer inline-flex items-center gap-1 ${
                                 enRupture
                                   ? 'bg-red-500/20 text-red-400 border border-red-500/30'
@@ -1071,54 +1123,144 @@ export default function Dashboard({ session, seDeconnecter }) {
           </div>
         )}
 
-        {/* ONGLET COMMANDES */}
+        {/* =================================================================== */}
+        {/* SPRINT 10 : ONGLET AUTO-ORDER, SYNC EBAY & VIREMENTS WISE           */}
+        {/* =================================================================== */}
         {ongletActif === 'commandes' && (
-          <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 space-y-6">
-            <div className="flex justify-between items-center">
-              <h2 className="font-bold text-lg">Cockpit Auto-Fulfilment ({orders.length})</h2>
-              <button onClick={exporterCommandesCSV} className="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-4 py-2 rounded-xl font-bold cursor-pointer">
-                Exporter CSV
-              </button>
+          <div className="space-y-6">
+            {/* BANDEAU TRÉSORERIE & VIREMENTS WISE (EBAY MANAGED PAYMENTS) */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+                <div className="text-xs text-slate-400">Chiffre d'Affaires Brut eBay</div>
+                <div className="text-2xl font-extrabold text-white mt-1">{totalVentesBrut.toFixed(2)} €</div>
+                <div className="text-[11px] text-slate-500 mt-1">Encaissé via eBay Managed Payments</div>
+              </div>
+
+              <div className="bg-slate-900 border border-cyan-500/30 p-5 rounded-2xl">
+                <div className="flex items-center justify-between text-xs text-cyan-400 font-bold">
+                  <span>Virement Net vers Wise (IBAN BE20...0356)</span>
+                  <Landmark className="w-4 h-4" />
+                </div>
+                <div className="text-2xl font-extrabold text-cyan-300 mt-1">{totalVirementWise} €</div>
+                <div className="text-[11px] text-slate-400 mt-1">Après commission eBay (~13% déduits à la source)</div>
+              </div>
+
+              <div className="bg-slate-900 border border-emerald-500/30 p-5 rounded-2xl">
+                <div className="text-xs text-emerald-400 font-bold">Bénéfice Net Réel (Dans ta poche)</div>
+                <div className="text-2xl font-extrabold text-emerald-400 mt-1">+{totalProfitNet.toFixed(2)} €</div>
+                <div className="text-[11px] text-slate-400 mt-1">Après achat automatique chez le fournisseur</div>
+              </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-sm">
-                <thead>
-                  <tr className="border-b border-slate-800 text-slate-400 text-xs">
-                    <th className="pb-3">Commande</th>
-                    <th className="pb-3">Profit Net</th>
-                    <th className="pb-3">Suivi</th>
-                    <th className="pb-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60">
-                  {orders.map((ord) => (
-                    <tr key={ord.id}>
-                      <td className="py-4 pr-4">
-                        <div className="font-semibold">{ord.produit_titre}</div>
-                        <div className="text-xs text-slate-400">Client : {ord.acheteur_nom}</div>
-                      </td>
-                      <td className="py-4 pr-4 font-bold text-emerald-400">+{ord.benefice_reel} €</td>
-                      <td className="py-4 pr-4">
-                        <input
-                          type="text"
-                          value={ord.numero_suivi || ''}
-                          onChange={(e) => mettreAJourCommande(ord.id, { numero_suivi: e.target.value })}
-                          placeholder="N° Suivi..."
-                          className="px-3 py-1 bg-slate-950 border border-slate-800 rounded text-xs"
-                        />
-                      </td>
-                      <td className="py-4 text-right space-x-2">
-                        <button onClick={() => executerAutoOrderFournisseur(ord)} className="text-xs bg-amber-400 text-slate-950 px-2.5 py-1.5 rounded-lg font-bold cursor-pointer">
-                          ⚡ Auto-Order
-                        </button>
-                        <button onClick={() => supprimerCommande(ord.id)} className="text-slate-500 hover:text-red-400 p-1 cursor-pointer">
-                          <Trash2 className="w-4 h-4 inline" />
-                        </button>
-                      </td>
+
+            {/* BARRE D'ADRESSE CLIENT PAR DÉFAUT & SYNCHRONISATION EBAY */}
+            <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-wrap items-end justify-between gap-4">
+              <div className="flex-1 min-w-[240px]">
+                <label className="block text-xs text-slate-400 mb-1">Nom de l'acheteur eBay (pour Auto-Checkout) :</label>
+                <input
+                  type="text"
+                  value={acheteurSimulateur}
+                  onChange={(e) => setAcheteurSimulateur(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs"
+                />
+              </div>
+              <div className="flex-1 min-w-[280px]">
+                <label className="block text-xs text-slate-400 mb-1">Adresse de livraison à injecter chez Amazon/AliExpress :</label>
+                <input
+                  type="text"
+                  value={adresseSimulateur}
+                  onChange={(e) => setAdresseSimulateur(e.target.value)}
+                  placeholder="Rue, Code Postal Ville"
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs"
+                />
+              </div>
+              <div className="flex gap-2">
+                <a
+                  href="https://www.ebay.fr/sh/ord/?filter=status:AWAITING_SHIPMENT"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> Ouvrir Commandes eBay.fr
+                </a>
+                <button onClick={exporterCommandesCSV} className="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-4 py-2 rounded-xl font-bold cursor-pointer">
+                  Exporter CSV
+                </button>
+              </div>
+            </div>
+
+            {/* TABLEAU D'EXÉCUTION AUTO-FULFILMENT */}
+            <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 space-y-4">
+              <h2 className="font-bold text-lg">Cockpit Auto-Fulfilment & Auto-Tracking ({orders.length})</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-slate-400 text-xs">
+                      <th className="pb-3">Commande & Destinataire</th>
+                      <th className="pb-3">Statut</th>
+                      <th className="pb-3">Profit Net</th>
+                      <th className="pb-3">Numéro de Suivi & Sync eBay</th>
+                      <th className="pb-3 text-right">Auto-Checkout Fournisseur</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {orders.map((ord) => (
+                      <tr key={ord.id}>
+                        <td className="py-4 pr-4">
+                          <div className="font-semibold text-white">{ord.produit_titre}</div>
+                          <div className="text-xs text-slate-400">
+                            👤 {ord.acheteur_nom} • 📍 {ord.adresse_client || adresseSimulateur}
+                          </div>
+                        </td>
+                        <td className="py-4 pr-4">
+                          <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${
+                            ord.statut_workflow === 'EXPEDIE'
+                              ? 'bg-emerald-500/20 text-emerald-400'
+                              : ord.statut_workflow === 'COMMANDE_FOURNISSEUR'
+                              ? 'bg-cyan-500/20 text-cyan-300'
+                              : 'bg-amber-500/20 text-amber-300'
+                          }`}>
+                            {ord.statut_workflow === 'EXPEDIE'
+                              ? 'EXPÉDIÉ ✅'
+                              : ord.statut_workflow === 'COMMANDE_FOURNISSEUR'
+                              ? 'COMMANDÉ 🛒'
+                              : 'À COMMANDER ⚡'}
+                          </span>
+                        </td>
+                        <td className="py-4 pr-4 font-bold text-emerald-400">+{ord.benefice_reel} €</td>
+                        <td className="py-4 pr-4">
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              value={ord.numero_suivi || ''}
+                              onChange={(e) => mettreAJourCommande(ord.id, { numero_suivi: e.target.value })}
+                              placeholder="Coller N° Suivi..."
+                              className="px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs w-36"
+                            />
+                            <button
+                              onClick={() => injecterSuiviSurEbay(ord)}
+                              title="Envoyer automatiquement ce numéro de suivi sur eBay.fr"
+                              className="bg-indigo-500 hover:bg-indigo-400 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer inline-flex items-center gap-1"
+                            >
+                              <Send className="w-3 h-3" /> Sync eBay
+                            </button>
+                          </div>
+                        </td>
+                        <td className="py-4 text-right space-x-2 whitespace-nowrap">
+                          <button
+                            onClick={() => executerAutoOrderFournisseur(ord)}
+                            className="text-xs bg-amber-400 hover:bg-amber-300 text-slate-950 px-3 py-1.5 rounded-lg font-extrabold cursor-pointer"
+                          >
+                            ⚡ Auto-Checkout Fournisseur
+                          </button>
+                          <button onClick={() => supprimerCommande(ord.id)} className="text-slate-500 hover:text-red-400 p-1 cursor-pointer">
+                            <Trash2 className="w-4 h-4 inline" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
