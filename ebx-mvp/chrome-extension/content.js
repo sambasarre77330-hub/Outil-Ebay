@@ -1,5 +1,6 @@
 // ============================================================================
-// EBX.AI-ENGINE v4.0 : STOCK SCANNER + AUTO-CHECKOUT + EBAY ORDER & TRACKING SYNC
+// EBX.AI-ENGINE v4.2 COMPLET : STOCK SCANNER (AMAZON HAUL INCLUS) + 
+// AUTO-CHECKOUT COMPLET + EBAY ORDER & TRACKING SYNC
 // ============================================================================
 
 (function () {
@@ -120,7 +121,11 @@
 
         // Si on est sur la fiche produit, clic automatique sur "Ajouter au panier" ou "Acheter"
         setTimeout(() => {
-          const btnBuyNow = document.querySelector('#buy-now-button, #add-to-cart-button')
+          const btnBuyNow =
+            document.querySelector('#buy-now-button, #add-to-cart-button') ||
+            Array.from(document.querySelectorAll('button, input[type="submit"], span[role="button"]')).find(
+              el => el.innerText && el.innerText.toLowerCase().includes('ajouter au panier')
+            )
           if (btnBuyNow && !urlActuelle.includes('gp/buy') && !urlActuelle.includes('cart')) {
             btnBuyNow.style.border = '3px solid #10b981'
             btnBuyNow.click()
@@ -142,7 +147,7 @@
         if (estPageRecherche) {
           let premierLienProduit = null
           if (estAmazon) {
-            const liens = Array.from(document.querySelectorAll('div[data-component-type="s-search-result"] a.a-link-normal.s-underline-text'))
+            const liens = Array.from(document.querySelectorAll('div[data-component-type="s-search-result"] a.a-link-normal.s-underline-text, a.a-link-normal[href*="/dp/"]'))
             premierLienProduit = liens.find(a => a.href && a.href.includes('/dp/'))
           } else if (estAliExpress) {
             const liens = Array.from(document.querySelectorAll('a[href*="/item/"]'))
@@ -175,14 +180,20 @@
         let enStock = true
         let raisonStock = 'En stock (Expédition rapide)'
 
-        const boutonPanierAmazon = document.querySelector('#add-to-cart-button, #buy-now-button')
+        // Détection compatible Amazon classique + Amazon Haul (bouton jaune "Ajouter au panier")
+        const boutonPanierAmazon =
+          document.querySelector('#add-to-cart-button, #buy-now-button, input[name="submit.add-to-cart"]') ||
+          Array.from(document.querySelectorAll('button, span, input, a')).find(
+            el => el.innerText && el.innerText.trim().toLowerCase() === 'ajouter au panier'
+          )
+        const contientTextePanier = textePage.includes('ajouter au panier')
         const blocDispoAmazon = document.querySelector('#availability')?.innerText.toLowerCase() || ''
 
         if (estAmazon) {
           if (
             blocDispoAmazon.includes('actuellement indisponible') ||
             blocDispoAmazon.includes('temporairement en rupture') ||
-            !boutonPanierAmazon
+            (!boutonPanierAmazon && !contientTextePanier)
           ) {
             enStock = false
             raisonStock = 'Rupture de stock détectée sur Amazon'
@@ -203,21 +214,37 @@
         ).trim()
         const titreSEO = `${titreBrut.slice(0, 62).trim()} - NEUF Stock France`.slice(0, 80)
 
+        // Extraction du prix compatible Amazon classique + Amazon Haul (ex: 8,22 € séparé en 2 blocs)
         let prixAchat = 15.90
-        const selecteursPrix = [
-          '.a-price .a-offscreen',
-          '#priceblock_ourprice',
-          '.product-price-value',
-          '[class*="price--current"]',
-          '.fpPrice'
-        ]
-        for (const sel of selecteursPrix) {
-          const el = document.querySelector(sel)
-          if (el && el.innerText) {
-            const match = el.innerText.replace(',', '.').match(/\d+(\.\d{1,2})?/)
-            if (match) {
-              prixAchat = parseFloat(match[0])
-              break
+        let prixTrouve = false
+
+        // 1. Essayer de recomposer le prix entier + centimes (format Amazon Haul 8 + 22)
+        const prixEntier = document.querySelector('.a-price-whole')?.innerText?.replace(/[^\d]/g, '')
+        const prixCentimes = document.querySelector('.a-price-fraction')?.innerText?.replace(/[^\d]/g, '')
+        if (prixEntier) {
+          prixAchat = parseFloat(`${prixEntier}.${prixCentimes || '00'}`)
+          prixTrouve = true
+        }
+
+        // 2. Sinon, utiliser les sélecteurs standards Amazon / AliExpress / Cdiscount
+        if (!prixTrouve) {
+          const selecteursPrix = [
+            '.a-price .a-offscreen',
+            '#corePriceDisplay_desktop_feature_div .a-offscreen',
+            '#priceblock_ourprice',
+            '.product-price-value',
+            '[class*="price--current"]',
+            '.fpPrice'
+          ]
+          for (const sel of selecteursPrix) {
+            const el = document.querySelector(sel)
+            if (el && el.innerText) {
+              const match = el.innerText.replace(',', '.').match(/\d+(\.\d{1,2})?/)
+              if (match) {
+                prixAchat = parseFloat(match[0])
+                prixTrouve = true
+                break
+              }
             }
           }
         }
